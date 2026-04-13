@@ -1,0 +1,6 @@
+# Secrets
+.env
+.env.local
+.env.production.local
+.env.development.local
+.env*.local

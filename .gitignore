@@ -1,0 +1,39 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/
+DerivedData/
+build/
+*.pbxuser
+*.perspectivev3
+*.mode1v3
+*.mode2v3
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Secrets
+.env
+.env.local
+.env*.local
+
+# Archives & Distribution
+*.dmg
+*.zip
+*.app
+
+# XcodeGen
+*.xcodeproj
