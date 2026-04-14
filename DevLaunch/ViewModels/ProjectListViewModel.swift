@@ -86,10 +86,6 @@ final class ProjectListViewModel: ObservableObject {
         UserDefaults.standard.set(url.path, forKey: AppStorageKey.scanFolderPath)
         objectWillChange.send()
         NotificationCenter.default.post(name: .scanFolderDidChange, object: url)
-
-        Task {
-            await scanner.scan(folderURL: url)
-        }
     }
 
     func launch(_ project: Project) async {
