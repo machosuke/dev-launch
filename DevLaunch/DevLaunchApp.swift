@@ -16,10 +16,26 @@ struct DevLaunchApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var viewModel: ProjectListViewModel!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            AppStorageKey.editorCommand: "code",
+            AppStorageKey.aiCliCommand: "claude",
+            AppStorageKey.usesIntegratedTerminal: true,
+            AppStorageKey.sortOrder: SortOrder.recentFirst.rawValue,
+        ])
+
+        let scanner = ProjectScanner()
+        let launcher = ProjectLauncher()
+        viewModel = ProjectListViewModel(scanner: scanner, launcher: launcher)
+
         setupStatusItem()
         setupPopover()
+
+        if viewModel.hasScanFolder {
+            Task { await viewModel.performScan() }
+        }
     }
 
     private func setupStatusItem() {
@@ -38,10 +54,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 300, height: 340)
+        popover.contentSize = NSSize(width: 300, height: 400)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(
-            rootView: ContentView()
+            rootView: ProjectListView(viewModel: viewModel)
                 .frame(width: 300)
         )
     }
@@ -95,30 +111,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-// MARK: - ContentView
-
-struct ContentView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "terminal.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-
-            Text("No projects yet")
-                .font(.headline)
-
-            Text("Configure a scan folder in Settings")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

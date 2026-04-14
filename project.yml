@@ -34,3 +34,17 @@ targets:
         SWIFT_VERSION: "5.9"
         SWIFT_STRICT_CONCURRENCY: minimal
         CODE_SIGN_STYLE: Automatic
+
+  DevLaunchTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: DevLaunch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.machosuke.DevLaunchTests
+        SWIFT_VERSION: "5.9"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        GENERATE_INFOPLIST_FILE: YES
