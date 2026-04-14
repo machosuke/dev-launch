@@ -12,6 +12,7 @@ final class ProjectListViewModel: ObservableObject {
     @Published var sortOrder: SortOrder = .recentFirst
     @Published var errorMessage: String?
     @Published var isLaunching: Bool = false
+    @Published var launchingProjectPath: String?
 
     let scanner: ProjectScanner
     private let launcher: ProjectLauncher
@@ -84,6 +85,7 @@ final class ProjectListViewModel: ObservableObject {
 
         UserDefaults.standard.set(url.path, forKey: AppStorageKey.scanFolderPath)
         objectWillChange.send()
+        NotificationCenter.default.post(name: .scanFolderDidChange, object: url)
 
         Task {
             await scanner.scan(folderURL: url)
@@ -92,6 +94,7 @@ final class ProjectListViewModel: ObservableObject {
 
     func launch(_ project: Project) async {
         isLaunching = true
+        launchingProjectPath = project.path
         errorMessage = nil
 
         do {
@@ -102,6 +105,7 @@ final class ProjectListViewModel: ObservableObject {
         }
 
         isLaunching = false
+        launchingProjectPath = nil
     }
 
     // MARK: - Private

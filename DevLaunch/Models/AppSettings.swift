@@ -121,4 +121,5 @@ enum AppDefaults {
 extension Notification.Name {
     static let scanFolderDidChange = Notification.Name("com.machosuke.DevLaunch.scanFolderDidChange")
     static let shortcutDidChange   = Notification.Name("com.machosuke.DevLaunch.shortcutDidChange")
+    static let popoverShouldClose  = Notification.Name("com.machosuke.DevLaunch.popoverShouldClose")
 }

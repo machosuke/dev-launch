@@ -41,6 +41,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if viewModel.hasScanFolder {
             Task { await viewModel.performScan() }
+        } else {
+            showInitialPopover()
         }
     }
 
@@ -110,6 +112,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.viewModel.scanner.scan(folderURL: url)
             }
         }
+
+        NotificationCenter.default.addObserver(
+            forName: .popoverShouldClose,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.popover.performClose(nil)
+        }
     }
 
     @MainActor
@@ -163,6 +173,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+        }
+    }
+
+    private func showInitialPopover() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self,
+                  !self.viewModel.hasScanFolder,
+                  let button = self.statusItem.button,
+                  !self.popover.isShown else { return }
+
+            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            self.popover.contentViewController?.view.window?.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 

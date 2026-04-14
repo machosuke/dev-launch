@@ -3,6 +3,7 @@ import SwiftUI
 struct ProjectRowView: View {
     let project: Project
     let isLaunching: Bool
+    let isSelected: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -25,8 +26,16 @@ struct ProjectRowView: View {
                 }
             }
             .frame(height: 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
             .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+            )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(project.name)
+        .accessibilityHint("Opens \(project.name) in the configured editor")
     }
 }
