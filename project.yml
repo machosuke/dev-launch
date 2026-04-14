@@ -1,0 +1,36 @@
+name: DevLaunch
+options:
+  bundleIdPrefix: com.machosuke
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "16.0"
+
+targets:
+  DevLaunch:
+    type: application
+    platform: macOS
+    sources:
+      - DevLaunch
+    info:
+      path: DevLaunch/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleIconFile: AppIcon
+        CFBundleShortVersionString: "0.1.0"
+        NSHighResolutionCapable: true
+        NSAppleEventsUsageDescription: "DevLaunch uses Apple Events to open projects in your editor and start AI CLI tools."
+        NSAccessibilityUsageDescription: "DevLaunch needs Accessibility access to send keystrokes to your editor for opening AI CLI tools in the integrated terminal."
+    entitlements:
+      path: DevLaunch/DevLaunch.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.automation.apple-events: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.machosuke.DevLaunch
+        PRODUCT_NAME: DevLaunch
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_VERSION: "5.9"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        CODE_SIGN_STYLE: Automatic
