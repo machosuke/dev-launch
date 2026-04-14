@@ -5,8 +5,10 @@ struct DevLaunchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
+        // LSUIElement=true のメニューバーアプリでは Settings シーンが機能しないため、
+        // 設定ウィンドウは AppDelegate.openSettings() で NSWindowController 経由で表示する。
         Settings {
-            SettingsView()
+            EmptyView()
         }
     }
 }
@@ -18,6 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var viewModel: ProjectListViewModel!
     private var shortcutManager: GlobalShortcutManager!
+    private var settingsWindowController: NSWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [
@@ -120,6 +123,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.popover.performClose(nil)
         }
+
+        NotificationCenter.default.addObserver(
+            forName: .openSettings,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.openSettings()
+        }
     }
 
     @MainActor
@@ -189,8 +200,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    @objc func openSettings() {
+        popover.performClose(nil)
+
+        if let wc = settingsWindowController, let window = wc.window, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            let hostingController = NSHostingController(rootView: SettingsView())
+            let window = NSWindow(contentViewController: hostingController)
+            window.title = "DevLaunch Settings"
+            window.styleMask = [.titled, .closable]
+            window.setContentSize(NSSize(width: 420, height: 340))
+            window.center()
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.level = .floating
+            settingsWindowController = NSWindowController(window: window)
+            settingsWindowController?.showWindow(nil)
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// MARK: - NSWindowDelegate
+
+extension AppDelegate: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        // 設定ウィンドウが閉じたらメニューバー専用アプリに戻す
+        // 少し遅延を入れないと Dock アイコンが残ることがある
+        DispatchQueue.main.async {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 }

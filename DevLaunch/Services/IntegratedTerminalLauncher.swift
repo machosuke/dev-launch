@@ -52,11 +52,9 @@ struct IntegratedTerminalLauncher {
             throw LaunchError.editorNotFound(editorApp)
         }
 
-        // Step 2: エディタのウィンドウロード完了を待機
-        Thread.sleep(forTimeInterval: 5.0)
-
-        // Step 3: AppleScript でターミナル操作
-        // folderName と command は osascript の引数として渡し、AppleScript 内で変数として受け取る
+        // Step 2 & 3: ウィンドウ待機 + ターミナル操作を一体化した AppleScript で実行
+        // ポーリングでウィンドウの準備完了を確認してからキーストロークを送るため、
+        // 固定待機中にユーザー操作でフォーカスが奪われる問題を解消する
         let folderName = URL(fileURLWithPath: projectPath).lastPathComponent
         let appleScript = buildAppleScript(editorProcessName: editorProcessName)
 
@@ -88,11 +86,36 @@ struct IntegratedTerminalLauncher {
         // editorProcessName は静的マッピングで安全値のみ取りうるため直接埋め込み可
         let safeProcessName = escapeForAppleScript(editorProcessName)
 
+        // 改善ポイント:
+        // 1. ウィンドウ存在をポーリングで待機（固定5秒sleep廃止）
+        // 2. すべてのキー操作を tell process 内で実行（フォーカス外へのキー送信防止）
+        // 3. 各操作ブロック前に frontmost を再設定（途中のフォーカス奪取に対応）
         return """
         on run argv
             set folderName to item 1 of argv
             set procName to item 2 of argv
             set cliCommand to item 3 of argv
+
+            -- Phase 1: エディタウィンドウがフォルダ名を含むまでポーリング（最大10秒）
+            set windowFound to false
+            repeat 40 times
+                try
+                    tell application "System Events"
+                        tell process "\(safeProcessName)"
+                            repeat with w in windows
+                                if name of w contains folderName then
+                                    set windowFound to true
+                                    exit repeat
+                                end if
+                            end repeat
+                        end tell
+                    end tell
+                end try
+                if windowFound then exit repeat
+                delay 0.25
+            end repeat
+
+            -- Phase 2: ウィンドウをアクティブ化してキーストロークを送信
             tell application "System Events"
                 tell process "\(safeProcessName)"
                     set frontmost to true
@@ -102,17 +125,25 @@ struct IntegratedTerminalLauncher {
                             exit repeat
                         end if
                     end repeat
+                    delay 0.2
+
+                    -- IME を英数に切り替え
+                    key code 102
+                    delay 0.1
+
+                    -- 新規ターミナルを開く
+                    set frontmost to true
+                    keystroke "`" using {control down, shift down}
                 end tell
             end tell
-            delay 1
+
+            -- Phase 3: ターミナル準備待ち → コマンド入力
+            delay 1.5
             tell application "System Events"
-                key code 102
-                delay 0.5
                 tell process "\(safeProcessName)"
-                    keystroke "`" using {control down, shift down}
-                    delay 2
+                    set frontmost to true
                     keystroke cliCommand
-                    delay 0.3
+                    delay 0.2
                     keystroke return
                 end tell
             end tell

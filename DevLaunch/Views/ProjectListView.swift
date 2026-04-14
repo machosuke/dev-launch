@@ -76,8 +76,7 @@ struct ProjectListView: View {
                 Spacer()
 
                 Button {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    NSApp.activate(ignoringOtherApps: true)
+                    NotificationCenter.default.post(name: .openSettings, object: nil)
                 } label: {
                     Image(systemName: "gearshape")
                 }
