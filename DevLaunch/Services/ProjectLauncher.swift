@@ -51,7 +51,8 @@ final class ProjectLauncher {
             throw LaunchError.aiCliCommandNotFound(aiCli)
         }
 
-        let fullCliCommand = options.isEmpty ? aiCli : "\(aiCli) \(options)"
+        let safeOptions = sanitizeOptions(options)
+        let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
 
         try await Task.detached(priority: .userInitiated) { [integratedLauncher, externalLauncher] in
             if useIntegrated {
@@ -80,6 +81,16 @@ final class ProjectLauncher {
     }
 
     // MARK: - Private
+
+    /// Removes tokens containing shell metacharacters from a free-form options string.
+    nonisolated private func sanitizeOptions(_ options: String) -> String {
+        let dangerousChars = CharacterSet(charactersIn: ";|&$`\"'\\(){}[]<>!\n\r")
+        let tokens = options.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let safeTokens = tokens.filter { token in
+            token.rangeOfCharacter(from: dangerousChars) == nil
+        }
+        return safeTokens.joined(separator: " ")
+    }
 
     nonisolated private func resolveCommand(_ command: String) -> String? {
         // 絶対パスの場合はそのまま確認

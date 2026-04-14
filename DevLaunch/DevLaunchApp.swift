@@ -6,7 +6,7 @@ struct DevLaunchApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsPlaceholderView()
+            SettingsView()
         }
     }
 }
@@ -17,13 +17,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var viewModel: ProjectListViewModel!
+    private var shortcutManager: GlobalShortcutManager!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [
-            AppStorageKey.editorCommand: "code",
-            AppStorageKey.aiCliCommand: "claude",
-            AppStorageKey.usesIntegratedTerminal: true,
-            AppStorageKey.sortOrder: SortOrder.recentFirst.rawValue,
+            AppStorageKey.editorCommand: AppDefaults.editorCommand,
+            AppStorageKey.aiCliCommand: AppDefaults.aiCliCommand,
+            AppStorageKey.usesIntegratedTerminal: AppDefaults.usesIntegratedTerminal,
+            AppStorageKey.sortOrder: AppDefaults.sortOrder,
+            AppStorageKey.launchAtLogin: AppDefaults.launchAtLogin,
+            AppStorageKey.globalShortcutKeyCode: AppDefaults.globalShortcutKeyCode,
+            AppStorageKey.globalShortcutModifiers: AppDefaults.globalShortcutModifiers,
         ])
 
         let scanner = ProjectScanner()
@@ -32,6 +36,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         setupPopover()
+        setupShortcutManager()
+        setupNotificationObservers()
 
         if viewModel.hasScanFolder {
             Task { await viewModel.performScan() }
@@ -60,6 +66,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: ProjectListView(viewModel: viewModel)
                 .frame(width: 300)
         )
+    }
+
+    private func setupShortcutManager() {
+        Task { @MainActor in
+            shortcutManager = GlobalShortcutManager()
+            shortcutManager.onTrigger = { [weak self] in
+                guard let self, let button = self.statusItem.button else { return }
+                self.togglePopover(button)
+            }
+            startShortcutFromDefaults()
+        }
+    }
+
+    private func setupNotificationObservers() {
+        NotificationCenter.default.addObserver(
+            forName: .shortcutDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.startShortcutFromDefaults()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.startShortcutFromDefaults()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .scanFolderDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let url = note.object as? URL else { return }
+            Task { [weak self] in
+                await self?.viewModel.scanner.scan(folderURL: url)
+            }
+        }
+    }
+
+    @MainActor
+    private func startShortcutFromDefaults() {
+        let keyCode = UserDefaults.standard.integer(forKey: AppStorageKey.globalShortcutKeyCode)
+        let modifiers = UserDefaults.standard.integer(forKey: AppStorageKey.globalShortcutModifiers)
+        let shortcut = GlobalShortcut(keyCode: keyCode, modifiers: UInt64(max(0, modifiers)))
+        shortcutManager.start(shortcut: shortcut)
     }
 
     @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
@@ -111,21 +169,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-// MARK: - SettingsPlaceholderView
-
-struct SettingsPlaceholderView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "gearshape")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-
-            Text("Settings coming soon")
-                .font(.headline)
-        }
-        .frame(width: 400, height: 200)
     }
 }

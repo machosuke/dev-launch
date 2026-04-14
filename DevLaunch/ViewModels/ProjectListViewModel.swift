@@ -35,6 +35,8 @@ final class ProjectListViewModel: ObservableObject {
         }
     }
 
+    private var defaultsObserver: Any?
+
     init(scanner: ProjectScanner, launcher: ProjectLauncher) {
         self.scanner = scanner
         self.launcher = launcher
@@ -43,6 +45,17 @@ final class ProjectListViewModel: ObservableObject {
         // scanner の @Published 変更を ViewModel の objectWillChange に転送
         scannerSubscription = scanner.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+        }
+
+        // 設定画面でのソート順変更を即反映
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.loadSettings()
+            }
         }
     }
 

@@ -12,6 +12,9 @@ enum AppStorageKey {
     static let aiCliOptions = "aiCliOptions"
     static let usesIntegratedTerminal = "usesIntegratedTerminal"
     static let lastLaunchedDates = "lastLaunchedDates"
+    static let launchAtLogin = "launchAtLogin"
+    static let globalShortcutKeyCode = "globalShortcutKeyCode"
+    static let globalShortcutModifiers = "globalShortcutModifiers"
 }
 
 // MARK: - ProjectScanner
