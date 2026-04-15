@@ -11,6 +11,9 @@ targets:
     platform: macOS
     sources:
       - DevLaunch
+      - path: DevLaunch/Resources/AppIcon.icns
+        buildPhase: resources
+        type: file
     info:
       path: DevLaunch/Info.plist
       properties:

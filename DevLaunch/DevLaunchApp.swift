@@ -208,8 +208,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             let hostingController = NSHostingController(rootView: SettingsView())
             let window = NSWindow(contentViewController: hostingController)
-            window.title = "DevLaunch Settings"
-            window.styleMask = [.titled, .closable]
+            window.title = ""
+            window.styleMask = [.titled, .closable, .fullSizeContentView]
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
             window.setContentSize(NSSize(width: 420, height: 340))
             window.center()
             window.isReleasedWhenClosed = false
