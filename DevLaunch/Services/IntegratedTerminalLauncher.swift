@@ -20,14 +20,14 @@ struct IntegratedTerminalLauncher {
     }
 
     /// エディタコマンドからアプリ名・プロセス名を解決する
-    static func editorInfo(for command: String) -> (appName: String, processName: String) {
+    static func editorInfo(for command: String) -> (appName: String, processName: String)? {
         switch command {
         case "code":
             return ("Visual Studio Code", "Code")
         case "cursor":
             return ("Cursor", "Cursor")
         default:
-            return ("Visual Studio Code", "Code")
+            return nil
         }
     }
 

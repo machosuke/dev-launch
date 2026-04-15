@@ -6,6 +6,7 @@ final class ProjectLauncher {
     enum LaunchError: LocalizedError {
         case editorCommandNotFound(String)
         case aiCliCommandNotFound(String)
+        case editorLaunchFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -13,6 +14,8 @@ final class ProjectLauncher {
                 return "Editor not found: \"\(cmd)\". Please check Settings."
             case .aiCliCommandNotFound(let cmd):
                 return "AI CLI not found: \"\(cmd)\". Please check Settings."
+            case .editorLaunchFailed(let detail):
+                return "Failed to open editor: \(detail)"
             }
         }
     }
@@ -44,7 +47,7 @@ final class ProjectLauncher {
         let options = aiCliOptions
         let useIntegrated = usesIntegratedTerminal
 
-        guard resolveCommand(editor) != nil else {
+        guard let resolvedEditor = resolveCommand(editor) else {
             throw LaunchError.editorCommandNotFound(editor)
         }
         guard resolveCommand(aiCli) != nil else {
@@ -55,8 +58,7 @@ final class ProjectLauncher {
         let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
 
         try await Task.detached(priority: .userInitiated) { [integratedLauncher, externalLauncher] in
-            if useIntegrated {
-                let info = IntegratedTerminalLauncher.editorInfo(for: editor)
+            if useIntegrated, let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
                 try integratedLauncher.launch(
                     projectPath: project.path,
                     editorApp: info.appName,
@@ -64,12 +66,11 @@ final class ProjectLauncher {
                     command: fullCliCommand
                 )
             } else {
-                // エディタを先に開く
-                let openProcess = Process()
-                openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                openProcess.arguments = ["-a", IntegratedTerminalLauncher.editorInfo(for: editor).appName, project.path]
-                try openProcess.run()
-                openProcess.waitUntilExit()
+                if let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
+                    try Self.launchKnownEditor(appName: info.appName, projectPath: project.path)
+                } else {
+                    try Self.launchCustomEditor(executablePath: resolvedEditor, projectPath: project.path)
+                }
 
                 // 外部ターミナルで AI CLI 起動
                 try externalLauncher.launch(
@@ -159,5 +160,46 @@ final class ProjectLauncher {
             "/opt/homebrew/bin",
             NSHomeDirectory() + "/.local/bin",
         ]
+    }
+
+    nonisolated private static func launchKnownEditor(appName: String, projectPath: String) throws {
+        let openProcess = Process()
+        openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        openProcess.arguments = ["-a", appName, projectPath]
+
+        let stderrPipe = Pipe()
+        openProcess.standardError = stderrPipe
+
+        try openProcess.run()
+        openProcess.waitUntilExit()
+
+        guard openProcess.terminationStatus == 0 else {
+            let detail = readErrorOutput(from: stderrPipe, fallback: appName)
+            throw LaunchError.editorLaunchFailed(detail)
+        }
+    }
+
+    nonisolated private static func launchCustomEditor(executablePath: String, projectPath: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = [projectPath]
+
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let detail = readErrorOutput(from: stderrPipe, fallback: executablePath)
+            throw LaunchError.editorLaunchFailed(detail)
+        }
+    }
+
+    nonisolated private static func readErrorOutput(from pipe: Pipe, fallback: String) -> String {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return output.isEmpty ? fallback : output
     }
 }

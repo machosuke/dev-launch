@@ -24,13 +24,7 @@ struct ProjectListView: View {
                             Task { await launch(project) }
                         }
                     },
-                    onEscape: {
-                        if !viewModel.searchText.isEmpty {
-                            viewModel.searchText = ""
-                        } else {
-                            NotificationCenter.default.post(name: .popoverShouldClose, object: nil)
-                        }
-                    }
+                    onEscape: handleEscape
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -134,6 +128,21 @@ struct ProjectListView: View {
         .onChange(of: viewModel.searchText) { _ in
             syncSelection(with: viewModel.projects)
         }
+        .background {
+            if !viewModel.hasScanFolder || viewModel.scanner.isScanning {
+                KeyboardShortcutCaptureView(
+                    onArrowUp: { moveSelection(by: -1, in: viewModel.projects) },
+                    onArrowDown: { moveSelection(by: 1, in: viewModel.projects) },
+                    onReturn: {
+                        if let project = selectedProject(in: viewModel.projects) {
+                            Task { await launch(project) }
+                        }
+                    },
+                    onEscape: handleEscape
+                )
+                .frame(width: 0, height: 0)
+            }
+        }
         .task {
             if viewModel.hasScanFolder {
                 await viewModel.performScan()
@@ -176,6 +185,14 @@ struct ProjectListView: View {
         selectedProjectPath = projects.first?.path
     }
 
+    private func handleEscape() {
+        if !viewModel.searchText.isEmpty {
+            viewModel.searchText = ""
+        } else {
+            NotificationCenter.default.post(name: .popoverShouldClose, object: nil)
+        }
+    }
+
     private func launch(_ project: Project) async {
         await viewModel.launch(project)
         if viewModel.errorMessage == nil {
@@ -183,4 +200,63 @@ struct ProjectListView: View {
         }
     }
 
+}
+
+private struct KeyboardShortcutCaptureView: NSViewRepresentable {
+    var onArrowUp: () -> Void
+    var onArrowDown: () -> Void
+    var onReturn: () -> Void
+    var onEscape: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = KeyCaptureNSView()
+        view.onArrowUp = onArrowUp
+        view.onArrowDown = onArrowDown
+        view.onReturn = onReturn
+        view.onEscape = onEscape
+
+        DispatchQueue.main.async {
+            view.window?.makeFirstResponder(view)
+        }
+
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? KeyCaptureNSView else { return }
+        view.onArrowUp = onArrowUp
+        view.onArrowDown = onArrowDown
+        view.onReturn = onReturn
+        view.onEscape = onEscape
+
+        DispatchQueue.main.async {
+            if view.window?.firstResponder == nil {
+                view.window?.makeFirstResponder(view)
+            }
+        }
+    }
+
+    private final class KeyCaptureNSView: NSView {
+        var onArrowUp: () -> Void = {}
+        var onArrowDown: () -> Void = {}
+        var onReturn: () -> Void = {}
+        var onEscape: () -> Void = {}
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 36, 76:
+                onReturn()
+            case 53:
+                onEscape()
+            case 125:
+                onArrowDown()
+            case 126:
+                onArrowUp()
+            default:
+                super.keyDown(with: event)
+            }
+        }
+    }
 }
