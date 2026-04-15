@@ -138,8 +138,17 @@ final class ProjectLauncher {
 
         let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let paths = output.split(separator: ":").map(String.init)
-        return paths.isEmpty ? defaultPaths : paths
+        var paths = output.split(separator: ":").map(String.init)
+        if paths.isEmpty { return defaultPaths }
+
+        // アプリバンドルから起動した zsh はユーザープロファイルをロードしない場合があるため、
+        // defaultPaths に含まれるディレクトリを補完する
+        for defaultPath in defaultPaths {
+            if !paths.contains(defaultPath) {
+                paths.append(defaultPath)
+            }
+        }
+        return paths
     }
 
     private nonisolated var defaultPaths: [String] {
