@@ -3,7 +3,6 @@ import Foundation
 enum EditorPreset: String, CaseIterable, Identifiable {
     case vsCode = "code"
     case cursor = "cursor"
-    case zed    = "zed"
     case custom = "custom"
 
     var id: String { rawValue }
@@ -12,7 +11,6 @@ enum EditorPreset: String, CaseIterable, Identifiable {
         switch self {
         case .vsCode: return "VS Code"
         case .cursor: return "Cursor"
-        case .zed:    return "Zed"
         case .custom: return "Custom…"
         }
     }

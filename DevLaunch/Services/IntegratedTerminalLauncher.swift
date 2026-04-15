@@ -26,8 +26,6 @@ struct IntegratedTerminalLauncher {
             return ("Visual Studio Code", "Code")
         case "cursor":
             return ("Cursor", "Cursor")
-        case "zed":
-            return ("Zed", "Zed")
         default:
             return ("Visual Studio Code", "Code")
         }

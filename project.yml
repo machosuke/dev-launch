@@ -15,7 +15,7 @@ targets:
       path: DevLaunch/Info.plist
       properties:
         LSUIElement: true
-        CFBundleIconFile: AppIcon
+        CFBundleIconName: AppIcon
         CFBundleShortVersionString: "0.1.0"
         NSHighResolutionCapable: true
         NSAppleEventsUsageDescription: "DevLaunch uses Apple Events to open projects in your editor and start AI CLI tools."
@@ -34,6 +34,7 @@ targets:
         SWIFT_VERSION: "5.9"
         SWIFT_STRICT_CONCURRENCY: minimal
         CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   DevLaunchTests:
     type: bundle.unit-test
