@@ -18,6 +18,7 @@ targets:
       path: DevLaunch/Info.plist
       properties:
         LSUIElement: true
+        CFBundleIconFile: AppIcon
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "0.1.0"
         NSHighResolutionCapable: true
