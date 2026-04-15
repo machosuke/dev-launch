@@ -10,6 +10,7 @@ enum SortOrder: String {
 @MainActor
 final class ProjectListViewModel: ObservableObject {
     @Published var sortOrder: SortOrder = .recentFirst
+    @Published var searchText: String = ""
     @Published var errorMessage: String?
     @Published var isLaunching: Bool = false
     @Published var launchingProjectPath: String?
@@ -23,7 +24,14 @@ final class ProjectListViewModel: ObservableObject {
     }
 
     var projects: [Project] {
-        let source = scanner.projects
+        var source = scanner.projects
+
+        if !searchText.isEmpty {
+            source = source.filter {
+                $0.name.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+
         switch sortOrder {
         case .recentFirst:
             return source.sorted {
