@@ -50,8 +50,8 @@ struct IntegratedTerminalLauncher {
             throw LaunchError.editorNotFound(editorApp)
         }
 
-        // Step 2: エディタのウィンドウロード完了を待機
-        Thread.sleep(forTimeInterval: 5.0)
+        // Step 2: エディタの初期起動バッファ（ウィンドウ検出は AppleScript 側でポーリング）
+        Thread.sleep(forTimeInterval: 1.5)
 
         // Step 3: AppleScript でターミナル操作
         // folderName と command は osascript の引数として渡し、AppleScript 内で変数として受け取る
@@ -91,26 +91,80 @@ struct IntegratedTerminalLauncher {
             set folderName to item 1 of argv
             set procName to item 2 of argv
             set cliCommand to item 3 of argv
-            tell application "System Events"
-                tell process "\(safeProcessName)"
-                    set frontmost to true
-                    repeat with w in windows
-                        if name of w contains folderName then
-                            perform action "AXRaise" of w
-                            exit repeat
-                        end if
-                    end repeat
+
+            -- Phase 1: ウィンドウ出現ポーリング（0.5秒間隔、最大8秒）
+            set targetWindow to missing value
+            repeat 16 times
+                tell application "System Events"
+                    if exists process "\(safeProcessName)" then
+                        tell process "\(safeProcessName)"
+                            repeat with w in windows
+                                if name of w contains folderName then
+                                    set targetWindow to w
+                                    exit repeat
+                                end if
+                            end repeat
+                        end tell
+                    end if
                 end tell
-            end tell
-            delay 1
+                if targetWindow is not missing value then exit repeat
+                delay 0.5
+            end repeat
+
+            -- ウィンドウが見つからなければエラー終了
+            if targetWindow is missing value then
+                error "Target window not found for project: " & folderName
+            end if
+
+            -- フォーカス取得ハンドラ
+            script FocusHelper
+                on grabFocus(procName, targetWin)
+                    tell application "System Events"
+                        tell process procName
+                            set frontmost to true
+                            perform action "AXRaise" of targetWin
+                        end tell
+                    end tell
+                    delay 0.1
+                end grabFocus
+            end script
+
+            -- Phase 2: ウィンドウを前面に
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
+            delay 0.2
+
+            -- Phase 3: フォーカス再取得 → IME切替（英数キー）
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
             tell application "System Events"
                 key code 102
-                delay 0.5
+            end tell
+            delay 0.3
+
+            -- Phase 4: フォーカス再取得 → ターミナルを開く
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
+            tell application "System Events"
                 tell process "\(safeProcessName)"
                     keystroke "`" using {control down, shift down}
-                    delay 2
+                end tell
+            end tell
+
+            -- Phase 5: ターミナル起動待機 → フォーカス再取得
+            delay 1.2
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
+
+            -- Phase 6: フォーカス再取得 → コマンド入力
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
+            tell application "System Events"
+                tell process "\(safeProcessName)"
                     keystroke cliCommand
-                    delay 0.3
+                end tell
+            end tell
+            delay 0.2
+
+            -- Phase 7: フォーカス再取得 → Enter実行
+            FocusHelper's grabFocus("\(safeProcessName)", targetWindow)
+            tell application "System Events"
+                tell process "\(safeProcessName)"
                     keystroke return
                 end tell
             end tell
