@@ -45,7 +45,13 @@ DevLaunch は、Claude Code / Codex などの AI CLI を日常的に使う開発
 
 ### インストール
 
-ソースからビルドします。[XcodeGen](https://github.com/yonaskolb/XcodeGen) が必要です。
+#### ダウンロード（おすすめ）
+
+[Releases](https://github.com/machosuke/dev-launch/releases/latest) から `DevLaunch-x.y.z.dmg` をダウンロードし、開いて `DevLaunch.app` を `Applications` フォルダにドラッグします。署名・公証済み（Developer ID + Apple Notarization）なので Gatekeeper の警告なしで起動できます。
+
+#### ソースからビルド
+
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) が必要です。
 
 ```bash
 git clone https://github.com/machosuke/dev-launch.git
@@ -110,7 +116,13 @@ It scans a folder you choose for projects (subdirectories containing a `.git` di
 
 ### Installation
 
-Build from source. Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+#### Download (recommended)
+
+Download `DevLaunch-x.y.z.dmg` from the [latest release](https://github.com/machosuke/dev-launch/releases/latest), open it, and drag `DevLaunch.app` into your `Applications` folder. It is signed and notarized (Developer ID + Apple Notarization), so it opens without Gatekeeper warnings.
+
+#### Build from source
+
+Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```bash
 git clone https://github.com/machosuke/dev-launch.git
