@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT=${1:?"Usage: $0 <script_path> [runs] [project_path]"}
 N=${2:-10}
-PROJECT=${3:-"/Users/machosuke/Desktop/claude_code/dev-launch"}
+PROJECT=${3:-"$(cd "$(dirname "$0")/.." && pwd)"}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 RESULTS_DIR="$SCRIPT_DIR/results"

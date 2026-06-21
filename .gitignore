@@ -37,3 +37,6 @@ Package.resolved
 
 # XcodeGen
 *.xcodeproj
+
+# PoC test artifacts (local-only)
+poc/results/
