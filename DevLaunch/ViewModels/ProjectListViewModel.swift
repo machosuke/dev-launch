@@ -11,6 +11,7 @@ enum SortOrder: String {
 final class ProjectListViewModel: ObservableObject {
     @Published var sortOrder: SortOrder = .recentFirst
     @Published var searchText: String = ""
+    @Published var searchFieldID = UUID()
     @Published var errorMessage: String?
     @Published var isLaunching: Bool = false
     @Published var launchingProjectPath: String?

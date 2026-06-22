@@ -231,8 +231,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - NSPopoverDelegate
 
 extension AppDelegate: NSPopoverDelegate {
-    func popoverDidClose(_ notification: Notification) {
+    func popoverWillShow(_ notification: Notification) {
         viewModel.searchText = ""
+        viewModel.searchFieldID = UUID()
     }
 }
 
