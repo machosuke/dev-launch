@@ -1,10 +1,12 @@
 import Foundation
+import ApplicationServices
 
 struct IntegratedTerminalLauncher {
 
     enum LaunchError: LocalizedError {
         case editorNotFound(String)
         case accessibilityDenied
+        case automationDenied
         case osascriptFailed(String)
 
         var errorDescription: String? {
@@ -13,6 +15,8 @@ struct IntegratedTerminalLauncher {
                 return "Editor not found: \(name). Please check Settings."
             case .accessibilityDenied:
                 return "Accessibility permission required. Please grant access in System Settings > Privacy & Security > Accessibility."
+            case .automationDenied:
+                return "Automation permission required. Please allow DevLaunch to control \"System Events\" in System Settings > Privacy & Security > Automation."
             case .osascriptFailed(let detail):
                 return "Failed to send keystrokes to editor: \(detail)"
             }
@@ -37,6 +41,14 @@ struct IntegratedTerminalLauncher {
         editorProcessName: String,
         command: String
     ) throws {
+        // Step 0: アクセシビリティ権限の事前チェック（ロケール非依存）
+        // 未付与ならシステムの許可ダイアログを表示し、キー送信を試みる前に中断する
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+        guard trusted else {
+            throw LaunchError.accessibilityDenied
+        }
+
         // Step 1: エディタで新ウィンドウを開く
         // Process の arguments は配列で渡されるため、シェルインジェクションは発生しない
         let openProcess = Process()
@@ -72,8 +84,19 @@ struct IntegratedTerminalLauncher {
         let errorString = String(data: errorData, encoding: .utf8) ?? ""
 
         if osascriptProcess.terminationStatus != 0 {
-            if errorString.contains("assistive access") || errorString.contains("accessibility") {
+            // エラーメッセージ本文は OS の言語設定でローカライズされるため、
+            // 文言マッチに加えてロケール非依存のエラーコードでも判定する
+            // -25211 / 1002: assistive access（アクセシビリティ）拒否
+            // -1743: Apple Events（オートメーション）拒否
+            if errorString.contains("assistive access")
+                || errorString.contains("accessibility")
+                || errorString.contains("(-25211)")
+                || errorString.contains("(1002)") {
                 throw LaunchError.accessibilityDenied
+            }
+            if errorString.contains("(-1743)")
+                || errorString.contains("Not authorized to send Apple events") {
+                throw LaunchError.automationDenied
             }
             throw LaunchError.osascriptFailed(errorString)
         }
