@@ -97,6 +97,8 @@ final class ProjectListViewModel: ObservableObject {
     }
 
     func launch(_ project: Project) async {
+        guard !isLaunching else { return }
+
         isLaunching = true
         launchingProjectPath = project.path
         errorMessage = nil
