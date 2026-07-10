@@ -68,6 +68,12 @@ final class ProjectListViewModel: ObservableObject {
         }
     }
 
+    deinit {
+        if let observer = defaultsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     // MARK: - Public
 
     func performScan() async {

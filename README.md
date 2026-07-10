@@ -31,7 +31,7 @@ DevLaunch は、Claude Code / Codex などの AI CLI を日常的に使う開発
 
 - **フォルダスキャンによるプロジェクト自動検出** — 指定フォルダ直下の `.git` を持つサブディレクトリをプロジェクトとして自動検出。FSEvents で変更を監視し差分更新。
 - **ワンクリックでエディタ＋AI CLI を同時起動** — プロジェクトをクリックするとエディタが開き、統合ターミナル（または外部ターミナル）で AI CLI が走る。
-- **エディタ / AI CLI / 起動オプションのカスタマイズ** — VS Code / Cursor / Zed、Claude Code / Codex などをプリセット選択、またはカスタムコマンドを指定可能。`--dangerously-skip-permissions` のような起動オプションも自由入力。
+- **エディタ / AI CLI / 起動オプションのカスタマイズ** — VS Code / Cursor、Claude Code / Codex などをプリセット選択、またはカスタムコマンドを指定可能。`--dangerously-skip-permissions` のような起動オプションも自由入力。
 - **グローバルショートカット** — 任意のキーでポップオーバーの表示 / 非表示をトグル。
 - **キーボード操作** — `↑`/`↓` で選択、`Enter` で起動、`Esc` で閉じる。
 - **ログイン時自動起動**（任意） — `ServiceManagement` でログイン項目に登録。
@@ -40,7 +40,7 @@ DevLaunch は、Claude Code / Codex などの AI CLI を日常的に使う開発
 ### 動作環境
 
 - macOS 13 Ventura 以降
-- エディタ（VS Code / Cursor / Zed など）が CLI（`code` など）でインストール済み
+- エディタ（VS Code / Cursor など）が CLI（`code` など）でインストール済み
 - 起動したい AI CLI（`claude` / `codex` など）がインストール済み
 
 ### インストール
@@ -65,7 +65,7 @@ xcodebuild -scheme DevLaunch -destination 'platform=macOS' build
 1. アプリを起動すると、メニューバーにアイコンが表示されます。
 2. 初回起動時にスキャン対象フォルダを選択します（例: `~/Desktop/projects`）。
 3. メニューバーアイコンをクリックすると、検出されたプロジェクト一覧が表示されます。
-4. プロジェクト名をクリックすると、エディタが開き AI CLI が起動します。
+4. プロジェクト名をクリックすると、エディタが開き AI CLI が起動します。すでに同じプロジェクトのウィンドウが開いている場合は、そのウィンドウを前面に表示するだけで、AI CLI コマンドの再入力は行いません。
 5. 歯車アイコン（または右クリック → Settings…）から、エディタ・AI CLI・ショートカットなどを設定できます。
 
 ### 権限について
@@ -96,7 +96,7 @@ It scans a folder you choose for projects (subdirectories containing a `.git` di
 
 - **Automatic project detection by folder scan** — detects subdirectories with a `.git` directory as projects; watches for changes via FSEvents and updates incrementally.
 - **One-click launch of editor + AI CLI** — clicking a project opens your editor and runs the AI CLI in its integrated (or external) terminal.
-- **Customizable editor / AI CLI / launch options** — pick presets (VS Code / Cursor / Zed, Claude Code / Codex) or enter custom commands, plus free-form launch options like `--dangerously-skip-permissions`.
+- **Customizable editor / AI CLI / launch options** — pick presets (VS Code / Cursor, Claude Code / Codex) or enter custom commands, plus free-form launch options like `--dangerously-skip-permissions`.
 - **Global shortcut** — toggle the popover with a key of your choice.
 - **Keyboard navigation** — `↑`/`↓` to select, `Enter` to launch, `Esc` to close.
 - **Launch at login** (optional) — registered as a login item via `ServiceManagement`.
@@ -130,7 +130,7 @@ xcodebuild -scheme DevLaunch -destination 'platform=macOS' build
 1. Launch the app — an icon appears in your menu bar.
 2. On first launch, choose the folder to scan (e.g. `~/Desktop/projects`).
 3. Click the menu bar icon to see the list of detected projects.
-4. Click a project to open your editor and start the AI CLI.
+4. Click a project to open your editor and start the AI CLI. If a window for that project is already open, DevLaunch just brings it to the front and does not re-type the AI CLI command.
 5. Open the gear icon (or right-click → Settings…) to configure your editor, AI CLI, shortcut, and more.
 
 ### Permissions

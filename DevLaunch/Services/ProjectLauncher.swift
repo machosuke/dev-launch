@@ -47,17 +47,19 @@ final class ProjectLauncher {
         let options = aiCliOptions
         let useIntegrated = usesIntegratedTerminal
 
-        guard let resolvedEditor = resolveCommand(editor) else {
-            throw LaunchError.editorCommandNotFound(editor)
-        }
-        guard resolveCommand(aiCli) != nil else {
-            throw LaunchError.aiCliCommandNotFound(aiCli)
-        }
-
-        let safeOptions = sanitizeOptions(options)
-        let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
-
         try await Task.detached(priority: .userInitiated) { [integratedLauncher, externalLauncher] in
+            // コマンド解決はログインシェルの PATH 取得を伴い数秒かかりうるため、
+            // メインスレッドではなくこの detached タスク内で行う
+            guard let resolvedEditor = Self.resolveCommand(editor) else {
+                throw LaunchError.editorCommandNotFound(editor)
+            }
+            guard Self.resolveCommand(aiCli) != nil else {
+                throw LaunchError.aiCliCommandNotFound(aiCli)
+            }
+
+            let safeOptions = Self.sanitizeOptions(options)
+            let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
+
             if useIntegrated, let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
                 try integratedLauncher.launch(
                     projectPath: project.path,
@@ -84,7 +86,7 @@ final class ProjectLauncher {
     // MARK: - Private
 
     /// Removes tokens containing shell metacharacters from a free-form options string.
-    nonisolated private func sanitizeOptions(_ options: String) -> String {
+    nonisolated private static func sanitizeOptions(_ options: String) -> String {
         let dangerousChars = CharacterSet(charactersIn: ";|&$`\"'\\(){}[]<>!\n\r")
         let tokens = options.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         let safeTokens = tokens.filter { token in
@@ -93,7 +95,7 @@ final class ProjectLauncher {
         return safeTokens.joined(separator: " ")
     }
 
-    nonisolated private func resolveCommand(_ command: String) -> String? {
+    nonisolated private static func resolveCommand(_ command: String) -> String? {
         // 絶対パスの場合はそのまま確認
         if command.hasPrefix("/") {
             return FileManager.default.isExecutableFile(atPath: command) ? command : nil
@@ -106,7 +108,7 @@ final class ProjectLauncher {
         }
 
         // シェルを経由せず、PATH を直接分割して検索する
-        let pathDirs = searchPaths()
+        let pathDirs = searchPaths
         for dir in pathDirs {
             let fullPath = (dir as NSString).appendingPathComponent(command)
             if FileManager.default.isExecutableFile(atPath: fullPath) {
@@ -116,8 +118,9 @@ final class ProjectLauncher {
         return nil
     }
 
-    /// ログインシェルの PATH を取得する
-    nonisolated private func searchPaths() -> [String] {
+    /// ログインシェルの PATH（初回アクセス時に一度だけ取得してキャッシュする）。
+    /// zsh -l はユーザーのプロファイル次第で数秒かかるため、起動のたびに実行しない。
+    nonisolated private static let searchPaths: [String] = {
         // ProcessInfo の PATH はアプリバンドル起動時に限定的なので、
         // ログインシェルから PATH を取得する
         let process = Process()
@@ -150,9 +153,9 @@ final class ProjectLauncher {
             }
         }
         return paths
-    }
+    }()
 
-    private nonisolated var defaultPaths: [String] {
+    private nonisolated static var defaultPaths: [String] {
         [
             "/usr/local/bin",
             "/usr/bin",
