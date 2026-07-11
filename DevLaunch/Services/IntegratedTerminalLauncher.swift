@@ -41,7 +41,16 @@ struct IntegratedTerminalLauncher {
         editorProcessName: String,
         command: String
     ) throws {
-        // Step 0: アクセシビリティ権限の事前チェック（ロケール非依存）
+        // Step 0: 対象プロジェクトで AI CLI が既に稼働していれば、エディタを前面化するだけで
+        // キー送信は行わない。ウィンドウタイトルや AX ツリーの状態（コールド起動直後は
+        // ウィンドウ列挙が空になる）に依存しない、二重入力防止の最終ガード。
+        let cliName = command.split(separator: " ").first.map(String.init) ?? command
+        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+            try openEditor(editorApp: editorApp, projectPath: projectPath)
+            return
+        }
+
+        // Step 0.5: アクセシビリティ権限の事前チェック（ロケール非依存）
         // 未付与ならシステムの許可ダイアログを表示し、キー送信を試みる前に中断する
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let trusted = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
@@ -68,17 +77,7 @@ struct IntegratedTerminalLauncher {
         }
 
         // Step 2: エディタで新ウィンドウを開く
-        // Process の arguments は配列で渡されるため、シェルインジェクションは発生しない
-        let openProcess = Process()
-        openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        openProcess.arguments = ["-n", "-a", editorApp, "--args", "--new-window", projectPath]
-
-        try openProcess.run()
-        openProcess.waitUntilExit()
-
-        guard openProcess.terminationStatus == 0 else {
-            throw LaunchError.editorNotFound(editorApp)
-        }
+        try openEditor(editorApp: editorApp, projectPath: projectPath)
 
         // タイトルは一致するがパスを確認できないウィンドウ（"ambiguous"）が存在する場合、
         // それが「AI CLI 稼働中の同一プロジェクト」か「同名フォルダの別プロジェクト」かを
@@ -91,14 +90,145 @@ struct IntegratedTerminalLauncher {
         // Step 3: エディタの初期起動バッファ（ウィンドウ検出は AppleScript 側でポーリング）
         Thread.sleep(forTimeInterval: 1.5)
 
-        // Step 4: AppleScript でターミナルを開き AI CLI コマンドを入力する
+        // Step 4: プロジェクトウィンドウの出現を待って前面化する（キー送信はまだしない）
         _ = try runOsascript(
-            script: Self.launchScript,
+            script: Self.findProjectWindowScript,
+            arguments: [folderName, editorProcessName, projectURLPrefix]
+        )
+
+        // Step 5: 再チェック。Step 0 の判定以降（precheck・open・ウィンドウ出現待ちの間）に
+        // AI CLI が起動していたら、ターミナルを開く前に中止する
+        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+            return
+        }
+
+        // Step 6: ターミナルパネルを開き、起動完了を待つ（キー送信はまだしない）
+        _ = try runOsascript(
+            script: Self.prepareTerminalScript,
+            arguments: [folderName, editorProcessName, projectURLPrefix]
+        )
+
+        // Step 7: キー送信直前の最終再チェック。ターミナル起動待機（1.2秒）などの間に
+        // AI CLI が起動していたら、コマンド入力を中止する
+        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+            return
+        }
+
+        // Step 8: AI CLI コマンドを入力して実行する
+        _ = try runOsascript(
+            script: Self.typeCliCommandScript,
             arguments: [folderName, editorProcessName, command, projectURLPrefix]
         )
     }
 
     // MARK: - Private
+
+    /// エディタでプロジェクトを開く。既に同一フォルダのウィンドウがあれば
+    /// エディタ自身がパスベースでそのウィンドウを前面化する（誤爆しない）。
+    /// Process の arguments は配列で渡されるため、シェルインジェクションは発生しない
+    private func openEditor(editorApp: String, projectPath: String) throws {
+        let openProcess = Process()
+        openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        openProcess.arguments = ["-n", "-a", editorApp, "--args", "--new-window", projectPath]
+
+        try openProcess.run()
+        openProcess.waitUntilExit()
+
+        guard openProcess.terminationStatus == 0 else {
+            throw LaunchError.editorNotFound(editorApp)
+        }
+    }
+
+    /// 指定した AI CLI がプロジェクトディレクトリ配下を作業ディレクトリとして
+    /// 稼働中かをプロセス走査で判定する。
+    ///
+    /// CLI の実体は wrapper 経由でバージョン付きバイナリ（例:
+    /// ~/.local/share/claude/versions/2.1.206）として動くことがあるため、
+    /// 実行ファイル名の一致に加えて、パス成分に "/<cliName>/" を含む場合も
+    /// 同一 CLI とみなす。判定は同一ユーザーのプロセスに限られる（proc_pidinfo
+    /// は他ユーザーのプロセスでは失敗し、単にスキップされる）。
+    nonisolated static func isAICliRunning(named cliName: String, inProjectAt projectPath: String) -> Bool {
+        guard !cliName.isEmpty else { return false }
+        // カーネルが返す cwd はシンボリックリンク解決済みの実体パスなので、
+        // 比較対象も realpath(3) で実体パスに揃える（例: /var/... → /private/var/...）。
+        // Foundation の resolvingSymlinksInPath は /private プレフィックスを除去して
+        // しまい逆方向の正規化になるため使えない
+        var resolvedBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let projectRoot: String
+        if realpath(projectPath, &resolvedBuffer) != nil {
+            projectRoot = String(cString: resolvedBuffer)
+        } else {
+            projectRoot = URL(fileURLWithPath: projectPath).standardizedFileURL.path
+        }
+
+        var pidCount = proc_listallpids(nil, 0)
+        guard pidCount > 0 else { return false }
+        // 走査中のプロセス増加に備えて余裕を持たせる
+        var pids = [pid_t](repeating: 0, count: Int(pidCount) * 2)
+        pidCount = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard pidCount > 0 else { return false }
+
+        for pid in pids.prefix(Int(pidCount)) where pid > 0 {
+            // 作業ディレクトリがプロジェクト配下でなければ対象外
+            var vnodeInfo = proc_vnodepathinfo()
+            let infoSize = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, infoSize) == infoSize else {
+                continue
+            }
+            let cwd = withUnsafeBytes(of: vnodeInfo.pvi_cdir.vip_path) { raw in
+                String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+            }
+            guard cwd == projectRoot || cwd.hasPrefix(projectRoot + "/") else { continue }
+
+            // 実行ファイルのパスで CLI を識別する
+            var pathBuffer = [CChar](repeating: 0, count: 4096)
+            if proc_pidpath(pid, &pathBuffer, 4096) > 0 {
+                let executablePath = String(cString: pathBuffer)
+                if matchesCli(path: executablePath, cliName: cliName) {
+                    return true
+                }
+            }
+
+            // node などのインタプリタ経由で動く CLI は実行ファイル名では判別できないため、
+            // argv[0]（起動時に指定されたコマンド名）でも照合する
+            if let argv0 = argv0(of: pid), matchesCli(path: argv0, cliName: cliName) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 実行パス（または argv[0]）が対象 CLI を指すか。
+    /// 末尾要素の一致に加え、パス成分に "/<cliName>/" を含む場合
+    /// （例: ~/.local/share/claude/versions/2.1.206）も同一 CLI とみなす。
+    nonisolated private static func matchesCli(path: String, cliName: String) -> Bool {
+        (path as NSString).lastPathComponent == cliName || path.contains("/\(cliName)/")
+    }
+
+    /// KERN_PROCARGS2 で対象プロセスの argv[0] を取得する（同一ユーザーのみ可）。
+    /// バッファ先頭は argc(Int32)、続いて実行パス + NUL パディング、その後に argv[0] が並ぶ
+    nonisolated private static func argv0(of pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else {
+            return nil
+        }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else {
+            return nil
+        }
+
+        var index = MemoryLayout<Int32>.size
+        // 実行パスをスキップ
+        while index < size, buffer[index] != 0 { index += 1 }
+        // NUL パディングをスキップ
+        while index < size, buffer[index] == 0 { index += 1 }
+        guard index < size else { return nil }
+
+        var end = index
+        while end < size, buffer[end] != 0 { end += 1 }
+        return String(bytes: buffer[index..<end], encoding: .utf8)
+    }
 
     /// osascript を実行し、stdout（末尾空白除去済み）を返す。
     /// 終了コード非0の場合は stderr を TCC 権限エラーへ分類して throw する。
@@ -215,10 +345,11 @@ struct IntegratedTerminalLauncher {
             tell application "System Events"
                 if not (exists process procName) then return "none"
             end tell
-            my wakeAccessibility(procName)
             -- AX ツリーが目覚めるまでウィンドウは空を返すことがあるため、
-            -- 1件でも列挙できるまで最大3秒待つ（0件が実態ならタイムアウトで none）
+            -- 1件でも列挙できるまで最大3秒待つ（0件が実態ならタイムアウトで none）。
+            -- wake は1回では効かないことがあるため各イテレーションで実行する
             repeat 6 times
+                my wakeAccessibility(procName)
                 set winCount to 0
                 set sawAmbiguous to false
                 tell application "System Events"
@@ -247,21 +378,19 @@ struct IntegratedTerminalLauncher {
         \(matchHandlerScript)
         """
 
-    /// argv: 1=folderName, 2=processName, 3=cliCommand, 4=projectURLPrefix
+    /// argv: 1=folderName, 2=processName, 3=projectURLPrefix
     ///
-    /// このスクリプトは事前チェックが "none" の場合のみ実行される。すなわちタイトル一致かつ
-    /// パス不明（ambiguous）の既存ウィンドウは存在せず、同名タイトルの他ウィンドウが残って
-    /// いるとすればパス確認済みの別プロジェクト（foreign）だけである。そのため
-    /// "same" / "ambiguous"（＝開いたばかりでファイル未フォーカスの新規ウィンドウ）のみを
-    /// キー送信対象とすれば、別プロジェクトへの誤送信は起きない。
-    private static let launchScript = """
+    /// プロジェクトウィンドウの出現をポーリングで待ち、見つかったら前面化して "found" を
+    /// 返す。キー送信は行わない（呼び出し側が AI CLI 稼働の最終再チェックを挟むため、
+    /// ウィンドウ検出とキー送信は別スクリプトに分離している）。
+    /// 見つからなければエラー終了する。
+    private static let findProjectWindowScript = """
         on run argv
             set folderName to item 1 of argv
             set procName to item 2 of argv
-            set cliCommand to item 3 of argv
-            set urlPrefix to item 4 of argv
+            set urlPrefix to item 3 of argv
 
-            -- Phase 1: ウィンドウ出現ポーリング（0.5秒間隔、最大8秒）
+            -- ウィンドウ出現ポーリング（0.5秒間隔、最大8秒）
             -- 各イテレーションで AX ツリーを起こす（コールド起動直後は windows が空のため）
             set targetWindow to missing value
             repeat 16 times
@@ -283,10 +412,39 @@ struct IntegratedTerminalLauncher {
                 delay 0.5
             end repeat
 
-            -- ウィンドウが見つからなければエラー終了
             if targetWindow is missing value then
                 error "Target window not found for project: " & folderName
             end if
+
+            my grabFocus(procName, targetWindow)
+            return "found"
+        end run
+
+        on grabFocus(procName, targetWin)
+            tell application "System Events"
+                tell process procName
+                    set frontmost to true
+                    perform action "AXRaise" of targetWin
+                end tell
+            end tell
+            delay 0.1
+        end grabFocus
+
+        \(matchHandlerScript)
+        """
+
+    /// argv: 1=folderName, 2=processName, 3=projectURLPrefix
+    ///
+    /// ターミナルパネルを開いて起動完了を待つ。AI CLI コマンドの入力は行わない
+    /// （呼び出し側がターミナル起動待機の後にも AI CLI 稼働の最終再チェックを挟むため、
+    /// ターミナル準備とコマンド入力は別スクリプトに分離している）。
+    private static let prepareTerminalScript = """
+        on run argv
+            set folderName to item 1 of argv
+            set procName to item 2 of argv
+            set urlPrefix to item 3 of argv
+
+            set targetWindow to my reacquireWindow(folderName, procName, urlPrefix)
 
             -- Phase 2: ウィンドウを前面に（キーバインド初期化の待機を兼ねる）
             my grabFocus(procName, targetWindow)
@@ -307,11 +465,33 @@ struct IntegratedTerminalLauncher {
                 end tell
             end tell
 
-            -- Phase 5: ターミナル起動待機 → フォーカス再取得
+            -- Phase 5: ターミナル起動待機
             delay 1.2
-            my grabFocus(procName, targetWindow)
+            return "ready"
+        end run
 
-            -- Phase 6: フォーカス再取得 → コマンド入力
+        \(reacquireWindowHandlerScript)
+        """
+
+    /// argv: 1=folderName, 2=processName, 3=cliCommand, 4=projectURLPrefix
+    ///
+    /// このスクリプトは事前チェックが "none"、findProjectWindowScript でウィンドウを
+    /// 前面化済み、prepareTerminalScript でターミナル準備済み、かつ直前の AI CLI 稼働
+    /// 再チェックを通過した場合のみ実行される。すなわちタイトル一致かつパス不明
+    /// （ambiguous）の既存ウィンドウは存在せず、同名タイトルの他ウィンドウが残っている
+    /// とすればパス確認済みの別プロジェクト（foreign）だけである。そのため
+    /// "same" / "ambiguous"（＝開いたばかりでファイル未フォーカスの新規ウィンドウ）のみを
+    /// キー送信対象とすれば、別プロジェクトへの誤送信は起きない。
+    private static let typeCliCommandScript = """
+        on run argv
+            set folderName to item 1 of argv
+            set procName to item 2 of argv
+            set cliCommand to item 3 of argv
+            set urlPrefix to item 4 of argv
+
+            set targetWindow to my reacquireWindow(folderName, procName, urlPrefix)
+
+            -- Phase 6: フォーカス取得 → コマンド入力
             my grabFocus(procName, targetWindow)
             tell application "System Events"
                 tell process procName
@@ -328,6 +508,36 @@ struct IntegratedTerminalLauncher {
                 end tell
             end tell
         end run
+
+        \(reacquireWindowHandlerScript)
+        """
+
+    /// prepareTerminalScript / typeCliCommandScript 共通のウィンドウ再取得ハンドラ。
+    /// 直前の findProjectWindowScript で前面化済みのため短いポーリングで足りる。
+    /// 見つからなければエラー終了する。grabFocus と照合ハンドラ群も同梱する。
+    private static let reacquireWindowHandlerScript = """
+        on reacquireWindow(folderName, procName, urlPrefix)
+            set targetWindow to missing value
+            repeat 10 times
+                my wakeAccessibility(procName)
+                tell application "System Events"
+                    if exists process procName then
+                        tell process procName
+                            repeat with w in windows
+                                set verdict to my projectVerdict(name of w, my documentOf(w), folderName, urlPrefix)
+                                if verdict is "same" or verdict is "ambiguous" then
+                                    set targetWindow to w
+                                    exit repeat
+                                end if
+                            end repeat
+                        end tell
+                    end if
+                end tell
+                if targetWindow is not missing value then return targetWindow
+                delay 0.2
+            end repeat
+            error "Target window not found for project: " & folderName
+        end reacquireWindow
 
         on grabFocus(procName, targetWin)
             tell application "System Events"
