@@ -120,6 +120,73 @@ final class IntegratedTerminalLauncherTests: XCTestCase {
         )
     }
 
+    func testFreshShellIsFoundForIdleNewShell() throws {
+        let projectDir = tempDir.appendingPathComponent("myproject", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let bornAfter = Date().addingTimeInterval(-1)
+
+        // pty 付きのアイドル対話シェル（script が pty を割り当てて zsh を起動する）
+        let idle = Process()
+        idle.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        idle.arguments = ["-q", "/dev/null", "/bin/zsh", "-f", "-i"]
+        idle.standardInput = Pipe()  // 入力を保留したまま対話シェルをアイドルで維持
+        idle.currentDirectoryURL = projectDir
+        try idle.run()
+        runningProcesses.append(idle)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let found = IntegratedTerminalLauncher.waitForFreshShell(
+            inProjectAt: projectDir.path,
+            bornAfter: bornAfter,
+            timeout: 3.0
+        )
+        XCTAssertNotNil(found, "idle new shell should be detected as fresh")
+    }
+
+    func testFreshShellRejectsBusyShell() throws {
+        let projectDir = tempDir.appendingPathComponent("myproject", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        let bornAfter = Date().addingTimeInterval(-1)
+
+        // 子プロセス（sleep）を実行中のシェルは fresh ではない
+        let busy = Process()
+        busy.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        busy.arguments = ["-q", "/dev/null", "/bin/zsh", "-c", "/bin/sleep 30 & wait"]
+        busy.currentDirectoryURL = projectDir
+        try busy.run()
+        runningProcesses.append(busy)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let found = IntegratedTerminalLauncher.waitForFreshShell(
+            inProjectAt: projectDir.path,
+            bornAfter: bornAfter,
+            timeout: 1.5
+        )
+        XCTAssertNil(found, "shell with a running child must not be treated as fresh")
+    }
+
+    func testFreshShellRejectsOldShell() throws {
+        let projectDir = tempDir.appendingPathComponent("myproject", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        let idle = Process()
+        idle.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        idle.arguments = ["-q", "/dev/null", "/bin/zsh", "-f", "-i"]
+        idle.standardInput = Pipe()
+        idle.currentDirectoryURL = projectDir
+        try idle.run()
+        runningProcesses.append(idle)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // シェルの誕生より後の時刻を bornAfter に指定 → 古いシェルは対象外
+        let found = IntegratedTerminalLauncher.waitForFreshShell(
+            inProjectAt: projectDir.path,
+            bornAfter: Date().addingTimeInterval(2),
+            timeout: 1.0
+        )
+        XCTAssertNil(found, "shell born before the terminal request must be ignored")
+    }
+
     func testSimilarProjectPathPrefixDoesNotMatch() throws {
         // /tmp/x/app で稼働中の CLI が /tmp/x/ap の起動をブロックしないこと
         let projectDir = tempDir.appendingPathComponent("app", isDirectory: true)

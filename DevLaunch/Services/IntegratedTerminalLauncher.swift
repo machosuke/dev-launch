@@ -8,6 +8,7 @@ struct IntegratedTerminalLauncher {
         case accessibilityDenied
         case automationDenied
         case osascriptFailed(String)
+        case freshShellNotFound
 
         var errorDescription: String? {
             switch self {
@@ -19,6 +20,8 @@ struct IntegratedTerminalLauncher {
                 return "Automation permission required. Please allow DevLaunch to control \"System Events\" in System Settings > Privacy & Security > Automation."
             case .osascriptFailed(let detail):
                 return "Failed to send keystrokes to editor: \(detail)"
+            case .freshShellNotFound:
+                return "Could not confirm a fresh terminal shell. The AI CLI command was not typed to avoid disturbing existing sessions."
             }
         }
     }
@@ -111,6 +114,7 @@ struct IntegratedTerminalLauncher {
         }
 
         // Step 6: ターミナルパネルを開き、起動完了を待つ（キー送信はまだしない）
+        let terminalRequestedAt = Date()
         _ = try runOsascript(
             script: Self.prepareTerminalScript,
             arguments: [folderName, editorProcessName, projectURLPrefix]
@@ -124,12 +128,37 @@ struct IntegratedTerminalLauncher {
             return
         }
 
+        // Step 7.5: 「新品のシェル」ゲート（キー送信の必要条件）。
+        // Step 6 のターミナル作成以降に生まれた、何も実行していないプロジェクト直下の
+        // 対話シェルが確認できた場合のみキー送信する。稼働中の AI CLI を抱えるシェルは
+        // 「子プロセスなし・作成直後」の条件を満たせないため、ウィンドウ検出や
+        // CLI 検出がすべてすり抜けても、稼働中セッションへの打鍵は構造的に起きない。
+        guard let shellPid = Self.waitForFreshShell(
+            inProjectAt: projectPath,
+            bornAfter: terminalRequestedAt,
+            timeout: 6.0
+        ) else {
+            LaunchDiagnostics.log("step7.5: no fresh idle shell confirmed -> abort, no keystrokes")
+            throw LaunchError.freshShellNotFound
+        }
+        LaunchDiagnostics.log("step7.5: fresh shell confirmed (pid=\(shellPid))")
+
         // Step 8: AI CLI コマンドを入力して実行する
         _ = try runOsascript(
             script: Self.typeCliCommandScript,
             arguments: [folderName, editorProcessName, command, projectURLPrefix]
         )
         LaunchDiagnostics.log("step8: command typed and submitted")
+
+        // Step 9: 事後検証（情報記録のみ）。コマンドが実際に CLI を起動したかを確認する
+        for _ in 0..<10 {
+            Thread.sleep(forTimeInterval: 1.0)
+            if let match = Self.runningAICliDescription(named: cliName, inProjectAt: projectPath) {
+                LaunchDiagnostics.log("step9: CLI startup verified (\(match))")
+                return
+            }
+        }
+        LaunchDiagnostics.log("step9: WARNING - CLI did not appear within 10s after typing")
     }
 
     // MARK: - Private
@@ -170,13 +199,7 @@ struct IntegratedTerminalLauncher {
         // 比較対象も realpath(3) で実体パスに揃える（例: /var/... → /private/var/...）。
         // Foundation の resolvingSymlinksInPath は /private プレフィックスを除去して
         // しまい逆方向の正規化になるため使えない
-        var resolvedBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let projectRoot: String
-        if realpath(projectPath, &resolvedBuffer) != nil {
-            projectRoot = String(cString: resolvedBuffer)
-        } else {
-            projectRoot = URL(fileURLWithPath: projectPath).standardizedFileURL.path
-        }
+        let projectRoot = realProjectRoot(projectPath)
 
         var pidCount = proc_listallpids(nil, 0)
         guard pidCount > 0 else { return nil }
@@ -185,17 +208,12 @@ struct IntegratedTerminalLauncher {
         pidCount = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
         guard pidCount > 0 else { return nil }
 
+        // 検出漏れの事後解析用: 名前と tty は一致したが cwd が違ったセッション
+        var nearMisses: [String] = []
+
         for pid in pids.prefix(Int(pidCount)) where pid > 0 {
-            // 作業ディレクトリがプロジェクト配下でなければ対象外
-            var vnodeInfo = proc_vnodepathinfo()
-            let infoSize = Int32(MemoryLayout<proc_vnodepathinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, infoSize) == infoSize else {
-                continue
-            }
-            let cwd = withUnsafeBytes(of: vnodeInfo.pvi_cdir.vip_path) { raw in
-                String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
-            }
-            guard cwd == projectRoot || cwd.hasPrefix(projectRoot + "/") else { continue }
+            guard let cwd = cwd(of: pid) else { continue }
+            let cwdMatches = cwd == projectRoot || cwd.hasPrefix(projectRoot + "/")
 
             // CLI 名の照合（実行パス、なければ argv[0]）
             var matchedBy: String?
@@ -218,12 +236,17 @@ struct IntegratedTerminalLauncher {
             // ヘッドレスセッション等の常駐プロセス（tty なし）を多数持ち、それらは
             // プロジェクトを cwd にしていても「ターミナルで対話中のセッション」では
             // ない。tty の有無が対話セッションと常駐プロセスの判別軸になる
-            guard hasControllingTerminal(pid) else {
-                LaunchDiagnostics.log("cli scan: pid=\(pid) \(matchedBy) cwd=\(cwd) matched but no controlling tty -> ignored (background helper)")
-                continue
-            }
+            guard hasControllingTerminal(pid) else { continue }
 
-            return "pid=\(pid) \(matchedBy) cwd=\(cwd)"
+            if cwdMatches {
+                return "pid=\(pid) \(matchedBy) cwd=\(cwd)"
+            }
+            nearMisses.append("pid=\(pid) \(matchedBy) cwd=\(cwd)")
+        }
+        if !nearMisses.isEmpty {
+            // 「稼働中なのに検出されなかった」報告が来たとき、cwd のずれが原因かを
+            // 事後に判定できるよう、対象プロジェクト外の対話セッションを記録する
+            LaunchDiagnostics.log("cli scan: no match for \(projectRoot); interactive sessions elsewhere: \(nearMisses.joined(separator: " | "))")
         }
         return nil
     }
@@ -231,10 +254,87 @@ struct IntegratedTerminalLauncher {
     /// プロセスが制御端末を持つか（PROC_PIDTBSDINFO の pbi_flags で判定）。
     /// ターミナルで対話中のセッションだけが制御端末を持つ
     nonisolated private static func hasControllingTerminal(_ pid: pid_t) -> Bool {
+        bsdInfo(of: pid).map { ($0.pbi_flags & UInt32(PROC_FLAG_CONTROLT)) != 0 } ?? false
+    }
+
+    nonisolated private static func bsdInfo(of pid: pid_t) -> proc_bsdinfo? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
-        return (info.pbi_flags & UInt32(PROC_FLAG_CONTROLT)) != 0
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return info
+    }
+
+    /// 「新品のアイドルシェル」を探す。条件:
+    /// - 実行ファイル名が対話シェル（zsh/bash/fish/sh）
+    /// - 制御端末を持つ（ターミナル内の対話シェル）
+    /// - cwd がプロジェクト root に一致
+    /// - bornAfter 以降に生まれた（＝Step 6 で作ったターミナルのシェル）
+    /// - 子プロセスを持たない（＝まだ何も実行していない）
+    /// 条件を満たす pid を返す。timeout まで 0.3 秒間隔でリトライする
+    nonisolated static func waitForFreshShell(
+        inProjectAt projectPath: String,
+        bornAfter: Date,
+        timeout: TimeInterval
+    ) -> pid_t? {
+        let deadline = Date().addingTimeInterval(timeout)
+        // 秒単位の切り捨てだと最大1秒古いシェルを誤って「作成後」と判定するため、
+        // pbi_start_tvsec/tvusec を合成してマイクロ秒精度で比較する
+        let bornAfterMicros = UInt64(bornAfter.timeIntervalSince1970 * 1_000_000)
+        let shellNames: Set<String> = ["zsh", "bash", "fish", "sh"]
+        let projectRoot = realProjectRoot(projectPath)
+
+        repeat {
+            var pidCount = proc_listallpids(nil, 0)
+            if pidCount > 0 {
+                var pids = [pid_t](repeating: 0, count: Int(pidCount) * 2)
+                pidCount = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+                let allPids = Array(pids.prefix(Int(max(pidCount, 0))))
+
+                for pid in allPids where pid > 0 {
+                    guard let info = bsdInfo(of: pid),
+                          info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec >= bornAfterMicros,
+                          (info.pbi_flags & UInt32(PROC_FLAG_CONTROLT)) != 0 else { continue }
+
+                    var nameBuffer = [CChar](repeating: 0, count: 4096)
+                    guard proc_pidpath(pid, &nameBuffer, 4096) > 0,
+                          shellNames.contains((String(cString: nameBuffer) as NSString).lastPathComponent) else {
+                        continue
+                    }
+
+                    guard cwd(of: pid) == projectRoot else { continue }
+
+                    // 子プロセスを持つシェルは何かを実行中なので除外
+                    let hasChild = allPids.contains { childPid in
+                        childPid > 0 && childPid != pid && bsdInfo(of: childPid)?.pbi_ppid == UInt32(pid)
+                    }
+                    if !hasChild {
+                        return pid
+                    }
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+        } while Date() < deadline
+        return nil
+    }
+
+    nonisolated private static func cwd(of pid: pid_t) -> String? {
+        var vnodeInfo = proc_vnodepathinfo()
+        let infoSize = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vnodeInfo, infoSize) == infoSize else {
+            return nil
+        }
+        return withUnsafeBytes(of: vnodeInfo.pvi_cdir.vip_path) { raw in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+    }
+
+    /// プロジェクトパスをカーネルの返す cwd と比較可能な実体パスへ正規化する
+    nonisolated private static func realProjectRoot(_ projectPath: String) -> String {
+        var resolvedBuffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if realpath(projectPath, &resolvedBuffer) != nil {
+            return String(cString: resolvedBuffer)
+        }
+        return URL(fileURLWithPath: projectPath).standardizedFileURL.path
     }
 
     /// 実行パス（または argv[0]）が対象 CLI を指すか。
@@ -288,6 +388,8 @@ struct IntegratedTerminalLauncher {
         let errorString = String(data: errorData, encoding: .utf8) ?? ""
 
         if process.terminationStatus != 0 {
+            // 途中失敗が無音で消えると事後解析が不可能になるため必ず記録する
+            LaunchDiagnostics.log("osascript failed (exit \(process.terminationStatus)): \(errorString.prefix(300))")
             // エラーメッセージ本文は OS の言語設定でローカライズされるため、
             // 文言マッチに加えてロケール非依存のエラーコードでも判定する
             // -25211 / 1002: assistive access（アクセシビリティ）拒否

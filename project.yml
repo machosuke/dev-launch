@@ -19,8 +19,8 @@ targets:
       properties:
         LSUIElement: true
         CFBundleIconFile: AppIcon
-        CFBundleShortVersionString: "0.1.5"
-        CFBundleVersion: "7"
+        CFBundleShortVersionString: "0.1.6"
+        CFBundleVersion: "8"
         NSHighResolutionCapable: true
         NSAppleEventsUsageDescription: "DevLaunch uses Apple Events to open projects in your editor and start AI CLI tools."
         NSAccessibilityUsageDescription: "DevLaunch needs Accessibility access to send keystrokes to your editor for opening AI CLI tools in the integrated terminal."

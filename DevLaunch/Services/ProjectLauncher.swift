@@ -61,12 +61,18 @@ final class ProjectLauncher {
             let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
 
             if useIntegrated, let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
-                try integratedLauncher.launch(
-                    projectPath: project.path,
-                    editorApp: info.appName,
-                    editorProcessName: info.processName,
-                    command: fullCliCommand
-                )
+                do {
+                    try integratedLauncher.launch(
+                        projectPath: project.path,
+                        editorApp: info.appName,
+                        editorProcessName: info.processName,
+                        command: fullCliCommand
+                    )
+                } catch {
+                    // 途中失敗を無音にしない（診断ログとエラーバナーの両方に残す）
+                    LaunchDiagnostics.log("launch aborted with error: \(error.localizedDescription)")
+                    throw error
+                }
             } else {
                 if let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
                     try Self.launchKnownEditor(appName: info.appName, projectPath: project.path)
