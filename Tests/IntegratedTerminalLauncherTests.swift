@@ -23,16 +23,26 @@ final class IntegratedTerminalLauncherTests: XCTestCase {
 
     /// /bin/sleep を argv[0] 偽装（exec -a）で起動する。
     /// バイナリをコピーして実行すると macOS のセキュリティ機構に SIGKILL される
-    /// （プラットフォームバイナリのコピー実行は不可）ため、argv[0] で CLI 名を模す
-    private func spawnSleep(argv0: String, cwd: URL) throws -> Process {
+    /// （プラットフォームバイナリのコピー実行は不可）ため、argv[0] で CLI 名を模す。
+    ///
+    /// withTty: true の場合は /usr/bin/script 経由で疑似端末（pty）を割り当てて起動する。
+    /// 検出対象の「ターミナルで対話中のセッション」は制御端末を持つため、
+    /// 検出されるべきフィクスチャは pty 付きで作る必要がある。
+    @discardableResult
+    private func spawnSleep(argv0: String, cwd: URL, withTty: Bool = true) throws -> Process {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", "exec -a \"$0\" /bin/sleep 30", argv0]
+        if withTty {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+            process.arguments = ["-q", "/dev/null", "/bin/zsh", "-c", "exec -a \"$0\" /bin/sleep 30", argv0]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-c", "exec -a \"$0\" /bin/sleep 30", argv0]
+        }
         process.currentDirectoryURL = cwd
         try process.run()
         runningProcesses.append(process)
         // exec 完了を待つ（zsh の起動は速いが確実にする）
-        Thread.sleep(forTimeInterval: 0.3)
+        Thread.sleep(forTimeInterval: 0.5)
         XCTAssertTrue(process.isRunning, "fixture process died unexpectedly")
         return process
     }
@@ -80,6 +90,19 @@ final class IntegratedTerminalLauncherTests: XCTestCase {
         try FileManager.default.createDirectory(at: otherDir, withIntermediateDirectories: true)
 
         _ = try spawnSleep(argv0: "claude", cwd: otherDir)
+
+        XCTAssertFalse(
+            IntegratedTerminalLauncher.isAICliRunning(named: "claude", inProjectAt: projectDir.path)
+        )
+    }
+
+    func testIgnoresBackgroundProcessWithoutTty() throws {
+        // 名前・cwd が一致しても、制御端末を持たないプロセス（デーモン・IDE 連携・
+        // ヘッドレスセッション等のバックグラウンド常駐）は検出しないこと
+        let projectDir = tempDir.appendingPathComponent("myproject", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+
+        try spawnSleep(argv0: "claude", cwd: projectDir, withTty: false)
 
         XCTAssertFalse(
             IntegratedTerminalLauncher.isAICliRunning(named: "claude", inProjectAt: projectDir.path)

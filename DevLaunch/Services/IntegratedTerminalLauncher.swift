@@ -45,10 +45,13 @@ struct IntegratedTerminalLauncher {
         // キー送信は行わない。ウィンドウタイトルや AX ツリーの状態（コールド起動直後は
         // ウィンドウ列挙が空になる）に依存しない、二重入力防止の最終ガード。
         let cliName = command.split(separator: " ").first.map(String.init) ?? command
-        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+        LaunchDiagnostics.log("launch start: project=\(projectPath) cli=\(cliName)")
+        if let match = Self.runningAICliDescription(named: cliName, inProjectAt: projectPath) {
+            LaunchDiagnostics.log("step0: CLI already running (\(match)) -> focus only, no keystrokes")
             try openEditor(editorApp: editorApp, projectPath: projectPath)
             return
         }
+        LaunchDiagnostics.log("step0: no running CLI session detected")
 
         // Step 0.5: アクセシビリティ権限の事前チェック（ロケール非依存）
         // 未付与ならシステムの許可ダイアログを表示し、キー送信を試みる前に中断する
@@ -72,7 +75,9 @@ struct IntegratedTerminalLauncher {
             script: Self.focusExistingWindowScript,
             arguments: [folderName, editorProcessName, projectURLPrefix]
         )
+        LaunchDiagnostics.log("step1: window precheck = \(precheckResult)")
         if precheckResult == "reused" {
+            LaunchDiagnostics.log("step1: existing window focused -> done, no keystrokes")
             return
         }
 
@@ -84,6 +89,7 @@ struct IntegratedTerminalLauncher {
         // 区別できない。上の open はエディタ自身がパスベースで正しいウィンドウに集約する
         // ため誤爆しないが、キー送信は稼働中セッションへの二重入力になりうるためスキップする。
         if precheckResult == "ambiguous" {
+            LaunchDiagnostics.log("step2: ambiguous window -> opened editor, no keystrokes")
             return
         }
 
@@ -95,10 +101,12 @@ struct IntegratedTerminalLauncher {
             script: Self.findProjectWindowScript,
             arguments: [folderName, editorProcessName, projectURLPrefix]
         )
+        LaunchDiagnostics.log("step4: project window found and focused")
 
         // Step 5: 再チェック。Step 0 の判定以降（precheck・open・ウィンドウ出現待ちの間）に
         // AI CLI が起動していたら、ターミナルを開く前に中止する
-        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+        if let match = Self.runningAICliDescription(named: cliName, inProjectAt: projectPath) {
+            LaunchDiagnostics.log("step5: CLI appeared (\(match)) -> abort before terminal")
             return
         }
 
@@ -107,10 +115,12 @@ struct IntegratedTerminalLauncher {
             script: Self.prepareTerminalScript,
             arguments: [folderName, editorProcessName, projectURLPrefix]
         )
+        LaunchDiagnostics.log("step6: terminal panel opened")
 
         // Step 7: キー送信直前の最終再チェック。ターミナル起動待機（1.2秒）などの間に
         // AI CLI が起動していたら、コマンド入力を中止する
-        if Self.isAICliRunning(named: cliName, inProjectAt: projectPath) {
+        if let match = Self.runningAICliDescription(named: cliName, inProjectAt: projectPath) {
+            LaunchDiagnostics.log("step7: CLI appeared (\(match)) -> abort before typing")
             return
         }
 
@@ -119,6 +129,7 @@ struct IntegratedTerminalLauncher {
             script: Self.typeCliCommandScript,
             arguments: [folderName, editorProcessName, command, projectURLPrefix]
         )
+        LaunchDiagnostics.log("step8: command typed and submitted")
     }
 
     // MARK: - Private
@@ -140,15 +151,21 @@ struct IntegratedTerminalLauncher {
     }
 
     /// 指定した AI CLI がプロジェクトディレクトリ配下を作業ディレクトリとして
-    /// 稼働中かをプロセス走査で判定する。
+    /// 対話セッションとして稼働中かをプロセス走査で判定する。
+    nonisolated static func isAICliRunning(named cliName: String, inProjectAt projectPath: String) -> Bool {
+        runningAICliDescription(named: cliName, inProjectAt: projectPath) != nil
+    }
+
+    /// isAICliRunning の実体。稼働中なら「pid=... exe=... cwd=...」形式の説明
+    /// 文字列（診断ログ用）を、いなければ nil を返す。
     ///
     /// CLI の実体は wrapper 経由でバージョン付きバイナリ（例:
     /// ~/.local/share/claude/versions/2.1.206）として動くことがあるため、
     /// 実行ファイル名の一致に加えて、パス成分に "/<cliName>/" を含む場合も
     /// 同一 CLI とみなす。判定は同一ユーザーのプロセスに限られる（proc_pidinfo
     /// は他ユーザーのプロセスでは失敗し、単にスキップされる）。
-    nonisolated static func isAICliRunning(named cliName: String, inProjectAt projectPath: String) -> Bool {
-        guard !cliName.isEmpty else { return false }
+    nonisolated static func runningAICliDescription(named cliName: String, inProjectAt projectPath: String) -> String? {
+        guard !cliName.isEmpty else { return nil }
         // カーネルが返す cwd はシンボリックリンク解決済みの実体パスなので、
         // 比較対象も realpath(3) で実体パスに揃える（例: /var/... → /private/var/...）。
         // Foundation の resolvingSymlinksInPath は /private プレフィックスを除去して
@@ -162,11 +179,11 @@ struct IntegratedTerminalLauncher {
         }
 
         var pidCount = proc_listallpids(nil, 0)
-        guard pidCount > 0 else { return false }
+        guard pidCount > 0 else { return nil }
         // 走査中のプロセス増加に備えて余裕を持たせる
         var pids = [pid_t](repeating: 0, count: Int(pidCount) * 2)
         pidCount = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        guard pidCount > 0 else { return false }
+        guard pidCount > 0 else { return nil }
 
         for pid in pids.prefix(Int(pidCount)) where pid > 0 {
             // 作業ディレクトリがプロジェクト配下でなければ対象外
@@ -180,22 +197,44 @@ struct IntegratedTerminalLauncher {
             }
             guard cwd == projectRoot || cwd.hasPrefix(projectRoot + "/") else { continue }
 
-            // 実行ファイルのパスで CLI を識別する
+            // CLI 名の照合（実行パス、なければ argv[0]）
+            var matchedBy: String?
             var pathBuffer = [CChar](repeating: 0, count: 4096)
             if proc_pidpath(pid, &pathBuffer, 4096) > 0 {
                 let executablePath = String(cString: pathBuffer)
                 if matchesCli(path: executablePath, cliName: cliName) {
-                    return true
+                    matchedBy = "exe=\(executablePath)"
                 }
             }
-
-            // node などのインタプリタ経由で動く CLI は実行ファイル名では判別できないため、
-            // argv[0]（起動時に指定されたコマンド名）でも照合する
-            if let argv0 = argv0(of: pid), matchesCli(path: argv0, cliName: cliName) {
-                return true
+            if matchedBy == nil,
+               // node などのインタプリタ経由で動く CLI は実行ファイル名では判別できない
+               // ため、argv[0]（起動時に指定されたコマンド名）でも照合する
+               let argv0 = argv0(of: pid), matchesCli(path: argv0, cliName: cliName) {
+                matchedBy = "argv0=\(argv0)"
             }
+            guard let matchedBy else { continue }
+
+            // 制御端末を持たないプロセスは対象外。AI CLI はデーモン・IDE 連携・
+            // ヘッドレスセッション等の常駐プロセス（tty なし）を多数持ち、それらは
+            // プロジェクトを cwd にしていても「ターミナルで対話中のセッション」では
+            // ない。tty の有無が対話セッションと常駐プロセスの判別軸になる
+            guard hasControllingTerminal(pid) else {
+                LaunchDiagnostics.log("cli scan: pid=\(pid) \(matchedBy) cwd=\(cwd) matched but no controlling tty -> ignored (background helper)")
+                continue
+            }
+
+            return "pid=\(pid) \(matchedBy) cwd=\(cwd)"
         }
-        return false
+        return nil
+    }
+
+    /// プロセスが制御端末を持つか（PROC_PIDTBSDINFO の pbi_flags で判定）。
+    /// ターミナルで対話中のセッションだけが制御端末を持つ
+    nonisolated private static func hasControllingTerminal(_ pid: pid_t) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+        return (info.pbi_flags & UInt32(PROC_FLAG_CONTROLT)) != 0
     }
 
     /// 実行パス（または argv[0]）が対象 CLI を指すか。
