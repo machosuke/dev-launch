@@ -632,20 +632,21 @@ struct IntegratedTerminalLauncher {
 
             set targetWindow to my reacquireWindow(folderName, procName, urlPrefix)
 
-            -- Phase 6: フォーカス取得 → コマンド入力
+            -- Phase 6: フォーカス取得 → 行クリア → コマンド入力＋Enter
             my grabFocus(procName, targetWindow)
             tell application "System Events"
                 tell process procName
-                    keystroke cliCommand
-                end tell
-            end tell
-            delay 0.2
-
-            -- Phase 7: フォーカス再取得 → Enter実行
-            my grabFocus(procName, targetWindow)
-            tell application "System Events"
-                tell process procName
-                    keystroke return
+                    -- Ctrl+U: シェルの行バッファに残留テキストがあっても消してから打つ。
+                    -- 実履歴で「claude claude --flags」（残留 "claude " ＋本コマンドの連結）が
+                    -- 実行された事故があり、残留物の由来を問わず無害化するための前処理。
+                    -- 注: vi キーバインド（set -o vi）のシェルでは効かない場合がある
+                    -- （その場合は従来動作に戻るだけで、悪化はしない）
+                    keystroke "u" using {control down}
+                    delay 0.1
+                    -- コマンドと Enter は1回の keystroke で送る。分割すると間の
+                    -- フォーカス変化で Enter が別ペインに落ち、未確定のコマンド文字列が
+                    -- 行バッファに残留する（＝次回起動時の連結事故の種になる）
+                    keystroke cliCommand & return
                 end tell
             end tell
         end run
