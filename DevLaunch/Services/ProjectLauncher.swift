@@ -57,8 +57,7 @@ final class ProjectLauncher {
                 throw LaunchError.aiCliCommandNotFound(aiCli)
             }
 
-            let safeOptions = Self.sanitizeOptions(options)
-            let fullCliCommand = safeOptions.isEmpty ? aiCli : "\(aiCli) \(safeOptions)"
+            let fullCliCommand = Self.buildAICliCommand(command: aiCli, options: options)
 
             if useIntegrated, let info = IntegratedTerminalLauncher.editorInfo(for: editor) {
                 do {
@@ -91,14 +90,36 @@ final class ProjectLauncher {
 
     // MARK: - Private
 
-    /// Removes tokens containing shell metacharacters from a free-form options string.
-    nonisolated private static func sanitizeOptions(_ options: String) -> String {
-        let dangerousChars = CharacterSet(charactersIn: ";|&$`\"'\\(){}[]<>!\n\r")
-        let tokens = options.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let safeTokens = tokens.filter { token in
-            token.rangeOfCharacter(from: dangerousChars) == nil
+    /// Builds the command sent to the terminal.
+    ///
+    /// The settings UI stores the executable and extra options separately, but users may
+    /// reasonably paste a complete launch command into Extra Options. Without normalizing
+    /// that input, `command=claude` + `options=claude --flag` becomes
+    /// `claude claude --flag`; Claude treats the second `claude` as an initial prompt.
+    nonisolated static func buildAICliCommand(command: String, options: String) -> String {
+        var optionTokens = sanitizedOptionTokens(options)
+
+        if let first = optionTokens.first, isDuplicateCommandToken(first, command: command) {
+            optionTokens.removeFirst()
         }
-        return safeTokens.joined(separator: " ")
+
+        return ([command] + optionTokens).joined(separator: " ")
+    }
+
+    /// Removes tokens containing shell metacharacters from a free-form options string.
+    nonisolated private static func sanitizedOptionTokens(_ options: String) -> [String] {
+        let dangerousChars = CharacterSet(charactersIn: ";|&$`\"'\\(){}[]<>!\n\r")
+        return options
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .filter { token in
+                token.rangeOfCharacter(from: dangerousChars) == nil
+            }
+    }
+
+    nonisolated private static func isDuplicateCommandToken(_ token: String, command: String) -> Bool {
+        token == command
+            || ((token as NSString).lastPathComponent == (command as NSString).lastPathComponent)
     }
 
     nonisolated private static func resolveCommand(_ command: String) -> String? {

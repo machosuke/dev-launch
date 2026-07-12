@@ -46,10 +46,10 @@ struct EditorSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
-                TextField("Extra Options", text: $aiCliOptions, prompt: Text("e.g. --dangerously-skip-permissions"))
+                TextField("Extra Options (flags only)", text: $aiCliOptions, prompt: Text("e.g. --dangerously-skip-permissions"))
                     .textFieldStyle(.roundedBorder)
 
-                Text("Options appended to the AI CLI command.")
+                Text("Enter only options here. The selected AI CLI command is added automatically.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -6,6 +6,16 @@
 
 ## 解決済み
 
+### Extra Options に完全な起動コマンドを入力すると Claude に `claude` が初期プロンプトとして渡る（0.1.8）
+
+- 発見日: 2026-07-12
+- 症状: `claude --dangerously-skip-permissions` で Claude Code 自体は起動するが、起動直後の入力欄に `claude` が自動入力される
+- 根本原因: 保存値が Command = `claude`、Extra Options = `claude --dangerously-skip-permissions` だったため、結合結果が `claude claude --dangerously-skip-permissions` になっていた。2個目の `claude` は実行コマンドではなく Claude Code の初期プロンプトとして解釈される。これは既存セッションへの二重キー入力ではなく、起動時の引数重複だった
+- 対処:
+  1. Extra Options の先頭トークンが選択中の AI CLI コマンドと一致する場合は重複分を除去し、`claude --dangerously-skip-permissions` に正規化する
+  2. 設定画面を「flags only」と明記し、コマンド本体は自動追加されることを説明する
+  3. 実際の保存値を再現する回帰テストを追加する
+
 ### 既存セッションへの二重キー入力・新規起動でコマンドが入らない（0.1.3〜0.1.5 の一連の対応）
 
 - 経緯: 下記「Claude 起動後に〜」の 0.1.3 対応（ウィンドウ事前検出）後も再発。原因は AX ツリーがコールド状態だと precheck のウィンドウ列挙が空になり "none" と誤判定し、後続のキー送信スクリプトが wake 後にウィンドウを発見して稼働中セッションへ打鍵する時間差レース
